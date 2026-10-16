@@ -1,0 +1,38 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# VS Code
+.vscode/
+
+# Environment variables
+.env
+
+# Local database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+
+# Model checkpoints
+*.h5
+*.keras
+
+# Large datasets
+data/raw/
+data/videos/
+
+# MediaPipe downloaded task models
+assets/*.task
