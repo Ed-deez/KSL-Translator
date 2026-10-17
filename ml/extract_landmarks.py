@@ -1,175 +1,68 @@
-
-from pathlib import Path
-
+import os
 import cv2
 import mediapipe as mp
-import numpy as np
-import pandas as pd
+import csv
 
+# Dynamically set paths relative to the ml/ folder
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "..", "data", "raw")
+OUTPUT_DIR = os.path.join(BASE_DIR, "..", "data", "processed")
+OUTPUT_FILE = os.path.join(OUTPUT_DIR, "ksl_landmarks.csv")
 
-# Project paths
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# Initialize MediaPipe Hands for static images
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(
+    static_image_mode=True, # Crucial for processing individual images instead of a video stream
+    max_num_hands=2,
+    min_detection_confidence=0.5
+)
 
-DATASET_DIR = PROJECT_ROOT / "data" / "kslc-dataset"
-TRAIN_CSV = DATASET_DIR / "Train.csv"
-IMAGE_DIR = DATASET_DIR / "Images" / "Images"
+def extract_and_save():
+    # Ensure the output directory exists
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    
+    if not os.path.exists(DATA_DIR):
+        print(f"Error: The data directory was not found at {DATA_DIR}")
+        print("Please ensure your Kaggle images are placed in 'data/raw/'.")
+        return
 
-MODEL_PATH = PROJECT_ROOT / "assets" / "hand_landmarker.task"
-OUTPUT_CSV = PROJECT_ROOT / "data" / "landmarks" / "kslc_landmarks.csv"
-
-
-def find_image(image_id):
-    """Find an image using its ID, with or without .jpg."""
-    image_id = str(image_id).strip()
-
-    candidates = [
-        IMAGE_DIR / image_id,
-        IMAGE_DIR / f"{image_id}.jpg",
-        IMAGE_DIR / f"{image_id}.jpeg",
-        IMAGE_DIR / f"{image_id}.png",
-    ]
-
-    for path in candidates:
-        if path.is_file():
-            return path
-
-    return None
-
-
-def extract_normalized_landmarks(result):
-    """Convert 21 hand landmarks into 63 normalized features."""
-    if not result.hand_landmarks:
-        return None
-
-    points = np.array(
-        [
-            [point.x, point.y, point.z]
-            for point in result.hand_landmarks[0]
-        ],
-        dtype=np.float32,
-    )
-
-    # Make the wrist the origin.
-    points -= points[0].copy()
-
-    # Scale coordinates to reduce differences in hand size.
-    scale = np.max(np.abs(points))
-
-    if scale > 0:
-        points /= scale
-
-    return points.flatten()
-
-
-def main():
-    if not TRAIN_CSV.is_file():
-        raise FileNotFoundError(
-            f"Training CSV not found: {TRAIN_CSV}"
-        )
-
-    if not MODEL_PATH.is_file():
-        raise FileNotFoundError(
-            f"MediaPipe model not found: {MODEL_PATH}"
-        )
-
-    train_df = pd.read_csv(TRAIN_CSV)
-
-    required_columns = {"img_IDS", "Label"}
-    if not required_columns.issubset(train_df.columns):
-        raise ValueError(
-            "Train.csv must contain columns: img_IDS and Label. "
-            f"Found: {list(train_df.columns)}"
-        )
-
-    base_options = mp.tasks.BaseOptions(
-        model_asset_path=str(MODEL_PATH)
-    )
-
-    options = mp.tasks.vision.HandLandmarkerOptions(
-        base_options=base_options,
-        running_mode=mp.tasks.vision.RunningMode.IMAGE,
-        num_hands=1,
-        min_hand_detection_confidence=0.5,
-        min_hand_presence_confidence=0.5,
-    )
-
-    feature_columns = [
-        f"f{i}" for i in range(63)
-    ]
-
-    records = []
-    missing_images = 0
-    unreadable_images = 0
-    no_hand_detected = 0
-
-    with mp.tasks.vision.HandLandmarker.create_from_options(
-        options
-    ) as landmarker:
-
-        total = len(train_df)
-
-        for index, row in train_df.iterrows():
-            image_id = row["img_IDS"]
-            label = row["Label"]
-
-            image_path = find_image(image_id)
-
-            if image_path is None:
-                missing_images += 1
+    print("Starting landmark extraction...")
+    
+    # Open CSV in write mode
+    with open(OUTPUT_FILE, mode='w', newline='') as f:
+        writer = csv.writer(f)
+        
+        # Loop through each gesture folder (A, B, C, etc.)
+        for label in os.listdir(DATA_DIR):
+            label_path = os.path.join(DATA_DIR, label)
+            if not os.path.isdir(label_path):
                 continue
-
-            image = cv2.imread(str(image_path))
-
-            if image is None:
-                unreadable_images += 1
-                continue
-
-            rgb_image = cv2.cvtColor(
-                image, cv2.COLOR_BGR2RGB
-            )
-
-            mp_image = mp.Image(
-                image_format=mp.ImageFormat.SRGB,
-                data=rgb_image,
-            )
-
-            result = landmarker.detect(mp_image)
-            features = extract_normalized_landmarks(result)
-
-            if features is None:
-                no_hand_detected += 1
-                continue
-
-            record = dict(zip(feature_columns, features))
-            record["label"] = str(label)
-            record["image_id"] = str(image_id)
-
-            records.append(record)
-
-            if (index + 1) % 100 == 0:
-                print(f"Processed {index + 1}/{total} images")
-
-    OUTPUT_CSV.parent.mkdir(
-        parents=True, exist_ok=True
-    )
-
-    output_columns = (
-        feature_columns + ["label", "image_id"]
-    )
-
-    output_df = pd.DataFrame(
-        records, columns=output_columns
-    )
-    output_df.to_csv(OUTPUT_CSV, index=False)
-
-    print("\nExtraction complete.")
-    print(f"Images in training CSV: {len(train_df)}")
-    print(f"Landmarks extracted: {len(records)}")
-    print(f"Missing images: {missing_images}")
-    print(f"Unreadable images: {unreadable_images}")
-    print(f"No hand detected: {no_hand_detected}")
-    print(f"Saved to: {OUTPUT_CSV}")
-
+                
+            print(f"Processing gesture: {label}...")
+            
+            # Loop through every image in the gesture folder
+            for img_name in os.listdir(label_path):
+                img_path = os.path.join(label_path, img_name)
+                
+                image = cv2.imread(img_path)
+                if image is None:
+                    continue # Skip corrupted or unreadable images
+                
+                # Convert BGR to RGB for MediaPipe
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                results = hands.process(image_rgb)
+                
+                # If hands are found, save their coordinates
+                if results.multi_hand_landmarks:
+                    for hand_landmarks in results.multi_hand_landmarks:
+                        row = [label] # The first column is the target label (the answer)
+                        
+                        for landmark in hand_landmarks.landmark:
+                            row.extend([landmark.x, landmark.y, landmark.z])
+                            
+                        writer.writerow(row)
+                        
+    print(f"Extraction complete! Data saved to: {OUTPUT_FILE}")
 
 if __name__ == "__main__":
-    main()
+    extract_and_save()

@@ -4,11 +4,11 @@ import os
 import csv
 
 # Initialize MediaPipe Hands
-mp_hands = mp.solutions.hands
+from mediapipe.python.solutions import hands as mp_hands
 hands = mp_hands.Hands(static_image_mode=True, max_num_hands=1, min_detection_confidence=0.5)
 
 # Set up your paths
-DATA_DIR = '../data/raw'
+DATA_DIR = '../data/raw\\Images'
 OUTPUT_FILE = '../data/processed/ksl_landmarks.csv'
 
 def process_images():
