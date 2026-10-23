@@ -1,7 +1,8 @@
-import cv2
 import os
+import cv2
 
-DATA_DIR = '../data/raw\\Images'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "..", "data", "raw", "Images")
 
 def clean_dataset():
     removed_count = 0

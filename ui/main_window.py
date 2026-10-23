@@ -1,8 +1,6 @@
 from ui import translate_page
 import customtkinter as ctk
 
-# We will import the actual page classes from your other files.
-# For now, we will create dummy classes below so the code runs immediately.
 # import translate_page
 # import history_page
 # import feedback_page

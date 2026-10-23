@@ -171,21 +171,26 @@ class LoginWindow(ctk.CTk):
         self.register_link.bind("<Button-1>", self.open_registration)
 
     def handle_login(self):
-        email = self.email_entry.get()
+        email = self.email_entry.get().strip()
         password = self.password_entry.get()
         
         if not email or not password:
-            print("Please fill in both fields.")
+            messagebox.showwarning("Warning", "Please fill in both fields.")
             return
             
         # Verify credentials using our database script
         user_role = database.verify_user(email, password)
         
         if user_role:
-            print(f"Login successful! Welcome, {user_role}.")
-            # TODO: Destroy login window and open the main_window.py
+            # Login successful
+            self.destroy()  # Close the login window
+            
+            # Import and launch the main translation window
+            from ui.main_window import MainWindow
+            main_app = MainWindow()
+            main_app.mainloop()
         else:
-            print("Invalid email or password.")
+            messagebox.showerror("Login Failed", "Invalid email or password.")
 
     def open_registration(self, event):
         # Open the registration window and pass 'self' as the parent
