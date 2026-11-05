@@ -1,127 +1,152 @@
-from ui import translate_page
+import os
+import cv2
+import numpy as np
+import mediapipe as mp
 import customtkinter as ctk
+from PIL import Image
+from tensorflow.keras.models import load_model
+from tkinter import messagebox
+from database import database # Adjust this import if your DB file is in a different folder
 
-# import translate_page
-# import history_page
-# import feedback_page
-# import admin_page
+# Dynamically set paths to load the brain
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "..", "models", "ksl_cnn_lstm_model.keras")
+CLASSES_PATH = os.path.join(BASE_DIR, "..", "models", "gesture_classes.npy")
 
 class MainWindow(ctk.CTk):
-    def __init__(self, user_role="Signer", user_email="eddie@example.com"):
+    def __init__(self, current_user_email="Guest"):
         super().__init__()
         
-        self.title("KSL Translator")
+        self.current_user_email = current_user_email
+        self.title("KSL Translator - Live Feed")
         self.geometry("1000x700")
-        self.configure(fg_color="#1a1a1a") # Dark background
         
-        self.user_role = user_role
-        self.user_email = user_email
+        # Ensure the camera releases if the user clicks the red 'X' to close the window
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+        # --- 1. Load Machine Learning Models ---
+        print("Loading CNN-LSTM Model...")
+        self.model = load_model(MODEL_PATH)
+        self.classes = np.load(CLASSES_PATH, allow_pickle=True)
         
-        # Determine initials for the profile circle (e.g., "EW")
-        # In a full app, you might fetch the actual name from the DB
-        self.user_initials = "EW" 
+        # Initialize MediaPipe
+        self.mp_hands = mp.solutions.hands
+        self.hands = self.mp_hands.Hands(
+            static_image_mode=False, # False because this is a live video stream
+            max_num_hands=2, 
+            min_detection_confidence=0.7
+        )
+        self.mp_draw = mp.solutions.drawing_utils
+
+        # --- 2. Setup the UI ---
+        # Sidebar
+        self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0)
+        self.sidebar_frame.pack(side="left", fill="y")
         
-        self.setup_navigation_bar()
-        self.setup_main_content_area()
+        ctk.CTkLabel(self.sidebar_frame, text="Settings", font=("Arial", 20, "bold")).pack(pady=20)
         
-        # Dictionary to hold the different page frames
-        self.pages = {}
-        self.setup_pages()
+        self.logout_btn = ctk.CTkButton(self.sidebar_frame, text="Log Out", command=self.logout)
+        self.logout_btn.pack(side="bottom", pady=10, padx=20)
         
-        # Show the default page
-        self.show_page("Translate")
+        self.delete_btn = ctk.CTkButton(self.sidebar_frame, text="Delete Account", fg_color="#8B0000", hover_color="#FF0000", command=self.delete_account)
+        self.delete_btn.pack(side="bottom", pady=(10, 0), padx=20)
 
-    def setup_navigation_bar(self):
-        """Creates the persistent top menu bar seen in the mockups."""
-        self.nav_frame = ctk.CTkFrame(self, height=60, fg_color="#1a1a1a", corner_radius=0)
-        self.nav_frame.pack(side="top", fill="x")
-        self.nav_frame.pack_propagate(False) # Prevent frame from shrinking to fit content
+        # Main Content Area
+        self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.main_frame.pack(side="right", fill="both", expand=True, padx=20, pady=20)
         
-        # Bottom border for the nav bar to separate it from content
-        border = ctk.CTkFrame(self, height=1, fg_color="#333333", corner_radius=0)
-        border.pack(side="top", fill="x")
+        self.title_label = ctk.CTkLabel(self.main_frame, text="Real-Time Translation", font=("Arial", 28, "bold"))
+        self.title_label.pack(pady=10)
 
-        # Left Branding
-        self.logo_label = ctk.CTkLabel(self.nav_frame, text="👋 KSL Translator", font=("Arial", 18, "bold"))
-        self.logo_label.pack(side="left", padx=(20, 30))
+        # Output Translation Label
+        self.translation_var = ctk.StringVar(value="Waiting for gesture...")
+        self.translation_label = ctk.CTkLabel(self.main_frame, textvariable=self.translation_var, font=("Arial", 36, "bold"), text_color="#00FF00")
+        self.translation_label.pack(pady=10)
 
-        # Navigation Tabs
-        self.tab_translate = ctk.CTkButton(self.nav_frame, text="Translate", width=80, fg_color="transparent", 
-                                           text_color="white", hover_color="#333333", 
-                                           command=lambda: self.show_page("Translate"))
-        self.tab_translate.pack(side="left", padx=5)
+        # Video Feed Label
+        self.video_label = ctk.CTkLabel(self.main_frame, text="")
+        self.video_label.pack(pady=10, expand=True)
 
-        self.tab_history = ctk.CTkButton(self.nav_frame, text="History", width=80, fg_color="transparent", 
-                                         text_color="gray", hover_color="#333333",
-                                         command=lambda: self.show_page("History"))
-        self.tab_history.pack(side="left", padx=5)
+        # --- 3. Start Camera and Processing Loop ---
+        self.cap = cv2.VideoCapture(0) # 0 is usually the default built-in webcam
+        self.update_frame()
 
-        self.tab_feedback = ctk.CTkButton(self.nav_frame, text="Feedback", width=80, fg_color="transparent", 
-                                          text_color="gray", hover_color="#333333",
-                                          command=lambda: self.show_page("Feedback"))
-        self.tab_feedback.pack(side="left", padx=5)
+    def update_frame(self):
+        """This function loops every 10 milliseconds to process the live video feed."""
+        ret, frame = self.cap.read()
         
-        # Admin Tab (Only show if user has admin privileges)
-        if self.user_role == "Admin":
-            self.tab_admin = ctk.CTkButton(self.nav_frame, text="Admin", width=80, fg_color="transparent", 
-                                              text_color="gray", hover_color="#333333",
-                                              command=lambda: self.show_page("Admin"))
-            self.tab_admin.pack(side="left", padx=5)
-
-        # Right Profile Circle
-        self.profile_btn = ctk.CTkButton(self.nav_frame, text=self.user_initials, width=40, height=40, 
-                                         corner_radius=20, fg_color="transparent", border_width=1,
-                                         border_color="gray", text_color="gray")
-        self.profile_btn.pack(side="right", padx=20)
-
-    def setup_main_content_area(self):
-        """Creates the blank container where the different pages will be loaded."""
-        self.content_frame = ctk.CTkFrame(self, fg_color="#1a1a1a", corner_radius=0)
-        self.content_frame.pack(side="bottom", fill="both", expand=True)
-
-    def setup_pages(self):
-        """Initializes all the pages and hides them in the content frame."""
-        self.pages["Translate"] = translate_page.TranslatePage(self.content_frame)
-        
-        self.pages["History"] = DummyPage(self.content_frame, "History Page (Data Table goes here)")
-        self.pages["Feedback"] = DummyPage(self.content_frame, "Feedback Page (Star Ratings go here)")
-        self.pages["Admin"] = DummyPage(self.content_frame, "Admin Dashboard")
-
-        for page in self.pages.values():
-            page.grid(row=0, column=0, sticky="nsew")
+        if ret:
+            # Flip frame to act like a mirror and convert colors for MediaPipe
+            frame = cv2.flip(frame, 1)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             
-        self.content_frame.grid_rowconfigure(0, weight=1)
-        self.content_frame.grid_columnconfigure(0, weight=1)
-
-    def show_page(self, page_name):
-        """Raises the selected page to the top and updates tab text colors."""
-        # Bring the requested page frame to the front
-        frame = self.pages[page_name]
-        frame.tkraise()
-        
-        # Reset all tab text colors to gray
-        self.tab_translate.configure(text_color="gray")
-        self.tab_history.configure(text_color="gray")
-        self.tab_feedback.configure(text_color="gray")
-        if hasattr(self, 'tab_admin'):
-            self.tab_admin.configure(text_color="gray")
+            # Process hands
+            results = self.hands.process(rgb_frame)
             
-        # Highlight the active tab in white
-        if page_name == "Translate":
-            self.tab_translate.configure(text_color="white")
-        elif page_name == "History":
-            self.tab_history.configure(text_color="white")
-        elif page_name == "Feedback":
-            self.tab_feedback.configure(text_color="white")
-        elif page_name == "Admin" and hasattr(self, 'tab_admin'):
-            self.tab_admin.configure(text_color="white")
+            if results.multi_hand_landmarks:
+                for hand_landmarks in results.multi_hand_landmarks:
+                    # Draw the tracking lines on the screen
+                    self.mp_draw.draw_landmarks(frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
+                    
+                    # Extract the 63 Coordinates
+                    coords = []
+                    for landmark in hand_landmarks.landmark:
+                        coords.extend([landmark.x, landmark.y, landmark.z])
+                        
+                    if len(coords) == 63:
+                        # Format the data for the CNN-LSTM (samples, time_steps, features)
+                        input_data = np.array(coords).reshape(1, 1, 63)
+                        
+                        # Make the prediction
+                        prediction = self.model.predict(input_data, verbose=0)
+                        class_idx = np.argmax(prediction)
+                        confidence = np.max(prediction)
+                        
+                        # Only update the UI if the model is at least 60% confident
+                        if confidence > 0.60: 
+                            detected_gesture = self.classes[class_idx]
+                            self.translation_var.set(f"Translation: {detected_gesture}")
 
-# --- Dummy class for testing until you build the real pages ---
-class DummyPage(ctk.CTkFrame):
-    def __init__(self, parent, text):
-        super().__init__(parent, fg_color="transparent")
-        label = ctk.CTkLabel(self, text=text, font=("Arial", 24))
-        label.pack(expand=True)
+            # Convert the OpenCV frame into a CustomTkinter Image
+            img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            imgtk = ctk.CTkImage(light_image=img, dark_image=img, size=(640, 480))
+            
+            # Update the label with the new frame
+            self.video_label.imgtk = imgtk
+            self.video_label.configure(image=imgtk)
+
+        # Schedule this function to run again in 10 milliseconds
+        self.after(10, self.update_frame)
+
+    # --- CRUD and Navigation Functions ---
+    def logout(self):
+        self.cap.release() # Turn off the webcam
+        self.destroy()
+        
+        # Adjust the import based on your exact login script name
+        from login_window import LoginWindow 
+        login_app = LoginWindow()
+        login_app.mainloop()
+
+    def delete_account(self):
+        if self.current_user_email == "Guest":
+            messagebox.showinfo("Info", "Guest accounts cannot be deleted.")
+            return
+            
+        confirm = messagebox.askyesno("Confirm Deletion", "Are you sure you want to delete your account? This cannot be undone.")
+        
+        if confirm:
+            success = database.delete_user(self.current_user_email)
+            if success:
+                messagebox.showinfo("Deleted", "Your account has been successfully deleted.")
+                self.logout()
+            else:
+                messagebox.showerror("Error", "Failed to delete account.")
+
+    def on_closing(self):
+        """Safely release the camera when clicking the window's close button."""
+        self.cap.release()
+        self.destroy()
 
 if __name__ == "__main__":
     app = MainWindow()

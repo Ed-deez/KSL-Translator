@@ -182,12 +182,11 @@ class LoginWindow(ctk.CTk):
         user_role = database.verify_user(email, password)
         
         if user_role:
-            # Login successful
             self.destroy()  # Close the login window
             
-            # Import and launch the main translation window
+            # Import and launch the main window, passing the email along
             from ui.main_window import MainWindow
-            main_app = MainWindow()
+            main_app = MainWindow(current_user_email=email)
             main_app.mainloop()
         else:
             messagebox.showerror("Login Failed", "Invalid email or password.")

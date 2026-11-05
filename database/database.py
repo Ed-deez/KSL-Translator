@@ -67,3 +67,18 @@ def verify_user(email, password):
 
 # Initialize the database immediately when this file is run/imported
 init_db()
+def delete_user(email):
+    """Deletes a user account from the database."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("DELETE FROM users WHERE email = ?", (email,))
+        conn.commit()
+        success = True
+    except sqlite3.Error:
+        success = False
+    finally:
+        conn.close()
+        
+    return success

@@ -32,7 +32,8 @@ Thumbs.db
 
 # Large datasets
 data/raw/Images
-data/processed/
+data/raw/Train 
+data/processed/ksl_landmarks
 
 # MediaPipe downloaded task models
 assets/*.task
