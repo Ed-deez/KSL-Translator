@@ -9,7 +9,6 @@ from tkinter import messagebox
 import pyttsx3
 import threading
 
-# Handle imports cleanly whether run as a module or direct script
 try:
     from database import database
     from ui.admin_dashboard import AdminDashboard
@@ -19,7 +18,6 @@ except ImportError:
     from database import database
     from ui.admin_dashboard import AdminDashboard
 
-# Dynamically set paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "..", "models", "ksl_cnn_lstm_model.keras")
 CLASSES_PATH = os.path.join(BASE_DIR, "..", "models", "gesture_classes.npy")
@@ -29,97 +27,122 @@ class MainWindow(ctk.CTk):
         super().__init__()
         
         self.current_user_email = current_user_email
-        self.title("KSL Translator - Live Feed")
+        self.title("KSL Translator - Loading...")
         self.geometry("1150x750")
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-        # --- 1. State & Sentence Variables ---
+        # --- 1. State Variables ---
         self.sentence = []
         self.current_gesture = None
         self.gesture_counter = 0
         self.required_frames = 15
         self.last_added_gesture = None
         
-        self.camera_paused = False
+        self.camera_paused = True # Keep paused during loading
         self.settings_open = False
         self.current_theme = "dark"
 
-        print("Loading CNN-LSTM Model...")
+        # --- 2. Setup Loading Screen ---
+        self.loading_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.loading_frame.pack(fill="both", expand=True)
+        
+        # Loading Logo / Icon
+        self.logo_label = ctk.CTkLabel(self.loading_frame, text="👋", font=("Arial", 80))
+        self.logo_label.pack(pady=(200, 20))
+
+        self.loading_title = ctk.CTkLabel(self.loading_frame, text="KSL Translator", font=("Arial", 32, "bold"))
+        self.loading_title.pack(pady=10)
+
+        # Progress Bar
+        self.progress_bar = ctk.CTkProgressBar(self.loading_frame, width=400, height=15, corner_radius=10)
+        self.progress_bar.pack(pady=20)
+        self.progress_bar.set(0.0) # Start at 0%
+
+        self.status_label = ctk.CTkLabel(self.loading_frame, text="Initializing environment...", text_color="gray", font=("Arial", 14))
+        self.status_label.pack()
+
+        # Start the loading sequence after 200ms so the UI has time to render the loading screen
+        self.after(200, self.load_step_1_mediapipe)
+
+    # --- 3. Staggered Loading Sequence ---
+    def load_step_1_mediapipe(self):
+        self.status_label.configure(text="Loading MediaPipe Vision tracking...")
+        self.progress_bar.set(0.25)
+        self.update_idletasks() # Force UI to visually update
+        
+        self.mp_hands = mp.solutions.hands
+        self.hands = self.mp_hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.7)
+        self.mp_draw = mp.solutions.drawing_utils
+        
+        self.after(100, self.load_step_2_tensorflow)
+
+    def load_step_2_tensorflow(self):
+        self.status_label.configure(text="Loading CNN-LSTM Neural Network (This may take a moment)...")
+        self.progress_bar.set(0.60)
+        self.update_idletasks()
+        
         self.model = load_model(MODEL_PATH)
         self.classes = np.load(CLASSES_PATH, allow_pickle=True)
         
-        self.mp_hands = mp.solutions.hands
-        self.hands = self.mp_hands.Hands(
-            static_image_mode=False, 
-            max_num_hands=2, 
-            min_detection_confidence=0.7
-        )
-        self.mp_draw = mp.solutions.drawing_utils
+        self.after(100, self.load_step_3_camera)
 
-        # --- 2. Setup Sidebar & Collapsible Settings Menu ---
+    def load_step_3_camera(self):
+        self.status_label.configure(text="Connecting to Webcam...")
+        self.progress_bar.set(0.85)
+        self.update_idletasks()
+        
+        self.cap = cv2.VideoCapture(0)
+        
+        self.after(100, self.load_step_4_ui)
+
+    def load_step_4_ui(self):
+        self.status_label.configure(text="Building Interface...")
+        self.progress_bar.set(1.0)
+        self.update_idletasks()
+        
+        # Destroy the loading screen
+        self.loading_frame.pack_forget()
+        self.loading_frame.destroy()
+        self.title("KSL Translator - Live Feed")
+        
+        # Build the actual app
+        self.build_main_ui()
+        
+        # Unpause camera and start video loop
+        self.camera_paused = False
+        self.update_frame()
+
+    # --- 4. Build Main UI (Moved from __init__) ---
+    def build_main_ui(self):
+        # Sidebar Setup
         self.sidebar_frame = ctk.CTkFrame(self, width=220, corner_radius=0)
         self.sidebar_frame.pack(side="left", fill="y")
         self.sidebar_frame.pack_propagate(False)
         
-        # Interactive Settings Toggle Button
         self.settings_btn = ctk.CTkButton(
-            self.sidebar_frame, 
-            text="⚙  Settings  ▾", 
-            font=("Arial", 16, "bold"),
-            fg_color="transparent",
-            hover_color="#333333",
-            anchor="w",
-            command=self.toggle_settings_menu
+            self.sidebar_frame, text="⚙  Settings  ▾", font=("Arial", 16, "bold"),
+            fg_color="transparent", hover_color="#333333", anchor="w", command=self.toggle_settings_menu
         )
         self.settings_btn.pack(fill="x", padx=15, pady=(20, 5))
 
-        # Dropdown Options Container (Hidden initially)
         self.settings_menu_frame = ctk.CTkFrame(self.sidebar_frame, fg_color="#242424", corner_radius=8)
         
-        self.nav_translator_btn = ctk.CTkButton(
-            self.settings_menu_frame,
-            text="📹  Live Translator",
-            fg_color="#333333",
-            hover_color="#444444",
-            anchor="w",
-            command=self.show_translator_view
-        )
+        self.nav_translator_btn = ctk.CTkButton(self.settings_menu_frame, text="📹  Live Translator", fg_color="#333333", hover_color="#444444", anchor="w", command=self.show_translator_view)
         self.nav_translator_btn.pack(fill="x", padx=8, pady=(8, 4))
 
-        self.nav_admin_btn = ctk.CTkButton(
-            self.settings_menu_frame,
-            text="📊  Admin Dashboard",
-            fg_color="transparent",
-            hover_color="#444444",
-            anchor="w",
-            command=self.show_admin_view
-        )
+        self.nav_admin_btn = ctk.CTkButton(self.settings_menu_frame, text="📊  Admin Dashboard", fg_color="transparent", hover_color="#444444", anchor="w", command=self.show_admin_view)
         self.nav_admin_btn.pack(fill="x", padx=8, pady=4)
 
-        self.theme_btn = ctk.CTkButton(
-            self.settings_menu_frame,
-            text="🌓  Switch Theme",
-            fg_color="transparent",
-            hover_color="#444444",
-            anchor="w",
-            command=self.toggle_theme
-        )
+        self.theme_btn = ctk.CTkButton(self.settings_menu_frame, text="🌓  Switch Theme", fg_color="transparent", hover_color="#444444", anchor="w", command=self.toggle_theme)
         self.theme_btn.pack(fill="x", padx=8, pady=(4, 8))
 
-        # Bottom Account Controls
         self.logout_btn = ctk.CTkButton(self.sidebar_frame, text="Log Out", command=self.logout)
         self.logout_btn.pack(side="bottom", pady=15, padx=20, fill="x")
         
-        self.delete_btn = ctk.CTkButton(
-            self.sidebar_frame, 
-            text="Delete Account", 
-            fg_color="#8B0000", 
-            hover_color="#FF0000", 
-            command=self.delete_account
-        )
+        self.delete_btn = ctk.CTkButton(self.sidebar_frame, text="Delete Account", fg_color="#8B0000", hover_color="#FF0000", command=self.delete_account)
         self.delete_btn.pack(side="bottom", pady=(10, 0), padx=20, fill="x")
 
-        # --- 3. Setup Views (Translator & Admin Dashboard) ---
+        # Main Translation Frame
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.main_frame.pack(side="right", fill="both", expand=True, padx=20, pady=20)
         
@@ -143,16 +166,10 @@ class MainWindow(ctk.CTk):
         self.video_label = ctk.CTkLabel(self.main_frame, text="")
         self.video_label.pack(pady=10, expand=True)
 
-        # Initialize Admin Dashboard view (kept hidden until selected)
         self.admin_view = AdminDashboard(self)
 
-        # Start Webcam
-        self.cap = cv2.VideoCapture(0)
-        self.update_frame()
-
-    # --- 4. Settings Menu & View Switching ---
+    # --- 5. Settings Menu & View Switching ---
     def toggle_settings_menu(self):
-        """Expands or collapses the Settings dropdown menu."""
         if self.settings_open:
             self.settings_menu_frame.pack_forget()
             self.settings_btn.configure(text="⚙  Settings  ▾")
@@ -163,27 +180,20 @@ class MainWindow(ctk.CTk):
             self.settings_open = True
 
     def show_admin_view(self):
-        """Pauses the camera feed and displays the Admin Dashboard."""
         self.camera_paused = True
         self.main_frame.pack_forget()
         self.admin_view.pack(side="right", fill="both", expand=True)
-        
-        # Highlight active menu item
         self.nav_admin_btn.configure(fg_color="#333333")
         self.nav_translator_btn.configure(fg_color="transparent")
 
     def show_translator_view(self):
-        """Hides the Admin Dashboard and resumes the live webcam feed."""
         self.admin_view.pack_forget()
         self.main_frame.pack(side="right", fill="both", expand=True, padx=20, pady=20)
         self.camera_paused = False
-        
-        # Highlight active menu item
         self.nav_translator_btn.configure(fg_color="#333333")
         self.nav_admin_btn.configure(fg_color="transparent")
 
     def toggle_theme(self):
-        """Switches UI appearance between Dark and Light modes."""
         if self.current_theme == "dark":
             ctk.set_appearance_mode("light")
             self.current_theme = "light"
@@ -191,22 +201,19 @@ class MainWindow(ctk.CTk):
             ctk.set_appearance_mode("dark")
             self.current_theme = "dark"
 
-    # --- 5. Processing Loop ---
+    # --- 6. Processing Loop ---
     def update_frame(self):
         if not self.camera_paused:
             ret, frame = self.cap.read()
-            
             if ret:
                 frame = cv2.flip(frame, 1)
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 results = self.hands.process(rgb_frame)
                 
                 hand_detected = False
-                
                 if results.multi_hand_landmarks:
                     for hand_landmarks in results.multi_hand_landmarks:
                         self.mp_draw.draw_landmarks(frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
-                        
                         coords = []
                         for landmark in hand_landmarks.landmark:
                             coords.extend([landmark.x, landmark.y, landmark.z])
@@ -220,7 +227,6 @@ class MainWindow(ctk.CTk):
                             
                             if confidence > 0.60: 
                                 detected_gesture = self.classes[class_idx]
-                                
                                 if detected_gesture == self.current_gesture:
                                     self.gesture_counter += 1
                                 else:
@@ -244,17 +250,14 @@ class MainWindow(ctk.CTk):
 
         self.after(10, self.update_frame)
 
-    # --- 6. Helper Functions & Text-to-Speech ---
+    # --- 7. Helper Functions & Text-to-Speech ---
     def update_sentence_ui(self):
         self.sentence_textbox.configure(state="normal")
         self.sentence_textbox.delete("0.0", "end")
-        
         if self.sentence:
-            full_text = " ".join(self.sentence)
-            self.sentence_textbox.insert("0.0", full_text)
+            self.sentence_textbox.insert("0.0", " ".join(self.sentence))
         else:
             self.sentence_textbox.insert("0.0", "Waiting for gesture...")
-            
         self.sentence_textbox.configure(state="disabled")
 
     def clear_sentence(self):
@@ -263,12 +266,8 @@ class MainWindow(ctk.CTk):
         self.update_sentence_ui()
 
     def speak_sentence(self):
-        if not self.sentence:
-            return
-            
-        text_to_speak = " ".join(self.sentence)
-        speech_thread = threading.Thread(target=self._run_tts, args=(text_to_speak,))
-        speech_thread.start()
+        if not self.sentence: return
+        threading.Thread(target=self._run_tts, args=(" ".join(self.sentence),)).start()
 
     def _run_tts(self, text):
         engine = pyttsx3.init()
@@ -277,14 +276,12 @@ class MainWindow(ctk.CTk):
         engine.say(text)
         engine.runAndWait()
 
-    # --- 7. Navigation & Security ---
+    # --- 8. Navigation & Security ---
     def logout(self):
-        self.cap.release() 
+        if hasattr(self, 'cap') and self.cap.isOpened(): self.cap.release()
         self.destroy()
-        try:
-            from ui.login_window import LoginWindow
-        except ImportError:
-            from login_window import LoginWindow
+        try: from ui.login_window import LoginWindow
+        except ImportError: from login_window import LoginWindow
         login_app = LoginWindow()
         login_app.mainloop()
 
@@ -292,18 +289,15 @@ class MainWindow(ctk.CTk):
         if self.current_user_email == "Guest":
             messagebox.showinfo("Info", "Guest accounts cannot be deleted.")
             return
-            
-        confirm = messagebox.askyesno("Confirm Deletion", "Are you sure you want to delete your account? This cannot be undone.")
-        if confirm:
-            success = database.delete_user(self.current_user_email)
-            if success:
+        if messagebox.askyesno("Confirm Deletion", "Are you sure you want to delete your account? This cannot be undone."):
+            if database.delete_user(self.current_user_email):
                 messagebox.showinfo("Deleted", "Your account has been successfully deleted.")
                 self.logout()
             else:
                 messagebox.showerror("Error", "Failed to delete account.")
 
     def on_closing(self):
-        self.cap.release()
+        if hasattr(self, 'cap') and self.cap.isOpened(): self.cap.release()
         self.destroy()
 
 if __name__ == "__main__":
